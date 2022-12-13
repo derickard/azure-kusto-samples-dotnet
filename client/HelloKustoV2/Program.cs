@@ -1,7 +1,8 @@
 ﻿using System;
 using System.Data;
+using System.Reflection;
 using System.Threading.Tasks;
-
+using System.Windows.Forms;
 using Kusto.Cloud.Platform.Data;
 using Kusto.Cloud.Platform.Utils;
 
@@ -29,7 +30,7 @@ namespace HelloKustoV2
             }
         }
 
-        static void MainImpl(Arguments arguments)
+        static async void MainImpl(Arguments arguments)
         {
             // 1. Create a connection string to a cluster/database with AAD user authentication
             var cluster = "https://help.kusto.windows.net/";
@@ -43,7 +44,7 @@ namespace HelloKustoV2
             using (var queryProvider = KustoClientFactory.CreateCslQueryProvider(kcsb))
             {
                 // 3. Send a query using the V2 API
-                var query = "print Welcome='Hello, World!'; print PI=pi()";
+                var query = "Trips | take 10 | project trip_id, pickup_datetime, passenger_count, total_amount";
                 var properties = new ClientRequestProperties()
                 {
                     ClientRequestId = "HelloKustoV2;" + Guid.NewGuid().ToString()
@@ -56,10 +57,126 @@ namespace HelloKustoV2
 
                 var queryTask = queryProvider.ExecuteQueryV2Async(database, query, properties);
 
+                String result = "";
+
+                queryTask.
+
+                //if (arguments.ProgressiveMode)
+                //{
+                //    result = await TestProgressive(queryTask);
+                //}
+                //else
+                //{
+                //    result = await Test(queryTask);
+                //}
+
+                //result = await Test(queryTask);
+                //Console.WriteLine($"Result: {result}");
+
                 // 4. Parse and print the results of the query
                 WriteResultsToConsole(queryTask);
             }
         }
+
+        static async Task<string> TestProgressive(Task<ProgressiveDataSet> queryTask)
+        {
+
+            using (var dataSet = queryTask.Result)
+            using (var frames = dataSet.GetFrames())
+                while (frames.MoveNext())
+                {
+                    Console.WriteLine($"Frame Type: {frames.Current.FrameType}");
+                    if (frames.Current.FrameType == FrameType.TableFragment)
+                    {
+                        var frameDataTable = frames.Current as ProgressiveDataSetDataTableFragmentFrame;
+                        var subType = frameDataTable.FrameSubType;
+                        var record = new object[frameDataTable.FieldCount];
+                        var first = true;
+                        while (frameDataTable.GetNextRecord(record))
+                        {
+                            foreach (var item in record)
+                            {
+                                if (first)
+                                {
+                                    first = false;
+                                }
+                                else
+                                {
+                                    Console.Write(",");
+                                }
+                                if (item == null)
+                                {
+                                    Console.Write("##null");
+                                }
+                                else
+                                {
+                                    Console.Write(item.ToString());
+                                }
+                            }
+                            Console.WriteLine();
+                        }
+                        Console.WriteLine();
+                    }
+                }
+
+            return await Task.FromResult("Progressive Successful");
+        }
+
+        static async Task<string> Test(Task<ProgressiveDataSet> queryTask)
+        {
+            string testResult = null;
+            using (var dataSet = queryTask.Result)
+            using (var frames = dataSet.GetFrames())
+                while (frames.MoveNext())
+                {
+                    Console.WriteLine($"Frame Type: {frames.Current.FrameType}");
+                    if (frames.Current.FrameType == FrameType.DataTable)
+                    {
+                        var frameDataTable = frames.Current as ProgressiveDataSetDataTableFrame;
+                        var kind = frameDataTable.TableKind;
+                        Console.WriteLine($"\tTable Kind: {kind}");
+
+                        var results = frameDataTable.TableData;   //// <<<----- IDatareader 
+
+                        if (kind == WellKnownDataSet.PrimaryResult)
+                        {
+                            testResult = await ConsumeTest(results);
+                        }
+                        else
+                        {
+                            while (results.Read())
+                            {
+                                results.Consume();
+                            }
+                        }
+                    }
+
+                }
+            return testResult;
+        }
+
+        static async Task<string> ConsumeTest(IDataReader results)
+        {
+            while (results.Read())
+            {
+                var writer = new System.IO.StringWriter();
+                results.WriteAsText("Results", true, writer,
+                    firstOnly: false,
+                    markdown: false,
+                    includeWithHeader: "ColumnType",
+                    includeHeader: true);
+                Console.WriteLine(writer.ToString());
+                //results.Consume();
+                Console.WriteLine($"-Consume-");
+            }
+
+            return await Task.FromResult("Successful");
+        }
+
+
+
+
+
 
         static void WriteResultsToConsole(Task<ProgressiveDataSet> queryTask)
         {
@@ -227,6 +344,6 @@ namespace HelloKustoV2
     class Arguments
     {
         [CommandLineArg("progressive", "If true, enabled receiving results in progressive mode")]
-        public bool ProgressiveMode = false;
+        public bool ProgressiveMode = true;
     }
 }
